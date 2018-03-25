@@ -9,19 +9,11 @@
 
 (use 'clojure.pprint)
 
-; (defmacro sleep-go
+; (defmacro rnd-sleep
 ;   (let [num-secs (inc (rand-int 20))]
 ;     (do
 ;       (Thread/sleep (* num-secs 1000)))))
 
-
-(defn- fetch-doc
-  "Fetches a website body based on a url"
-  [url]
-  (let [num-secs (inc (rand-int 20))]
-    (do
-      (Thread/sleep (* num-secs 1000))
-      (http/get url))))
 
 (def parsed-doc
   (-> "<html>
@@ -35,8 +27,18 @@
         h/parse
         h/as-hickory))
 
+(defn- fetch-doc
+  "Fetches a website body based on a url"
+  [url]
+  (let [num-secs (inc (rand-int 5))]
+    (do
+      (Thread/sleep (* num-secs 1000))
+      (prn (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
+      (http/get url))))
 
-(def work-chan (async/chan 30))
+
+
+(def work-chan (async/chan))
 (def results-chan (async/chan))
 
 
@@ -50,6 +52,9 @@
     h/parse
     h/as-hickory))
 
+(defn- hyperlinks [doc]
+  (mapv #(:href (:attrs %)) (s/select (s/child (s/tag :a)) (parse-doc (:body doc)))))
+
 (defn- invalid-doc? [doc]
   (let
     [content-type (get-in doc [:headers "Content-Type"])]
@@ -58,13 +63,15 @@
 (defn- mine-urls [doc]
   ; Only mine the doc if it's a valid html document
   (if (invalid-doc? doc)
-    []
-    (let
-      [alinks
-        (mapv #(:href (:attrs %))
-             (s/select (s/child (s/tag :a))
-               (parse-doc (:body doc))))]
-      (filterv valid-url alinks))))
+    (do
+      (prn "[mine-urls] Invalid document")
+      [])
+    (let [alinks (hyperlinks doc)
+          urls (filterv valid-url alinks)]
+      (do
+        (prn (str "[mine-urls] links=" urls "\n\n"))
+        urls))))
+
 
 (defn- valid-ftype? [url]
   (some #(str/ends-with? url %) [".gif" ".jpg" "jpeg"]))
@@ -85,24 +92,28 @@
 
 (defn- start-workers
   [num-workers]
-  (dotimes [idx num-workers]
-    (prn (str "Starting worker with idx=" idx))
+  (dotimes [tid num-workers]
+    (prn (str "Starting worker with tid=" tid))
     (async/thread
       (while true
         (let [url (async/<!! work-chan)]
           (do
-            (prn (str "[WORKCHAN] " url))
+            (prn (str "[start-workers][WORKCHAN DEQUEUE] " url))
             (if (valid-ftype? url)
-              (download url)
+              (do
+                (prn "[start-workers] (download url)")
+                (download url))
               (let [new-urls (mine-urls (fetch-doc url))]
                 (do
-                  (prn "Feeding new-urls into work-chan")
-                  (map #(async/>!! work-chan %) new-urls))))))))))
+                  (prn (str "[start-workers][WORKCHAN ENQUEUE] Feeding new-urls into work-chan tid=" tid " new-urls=" new-urls))
+                  (doseq [new-url new-urls]
+                    (async/>!! work-chan new-url)))))))))))
 
 (defn -main
   [& args]
   (do
-    (prn "Ok")
-    (start-workers 5)
+    (prn "Spawning worker threads...")
+    (start-workers 3)
     (let [seeding-url "http://www.google.com"]
-      (async/>!! work-chan seeding-url))))
+      (async/>!! work-chan seeding-url)
+      (async/<!! results-chan))))
