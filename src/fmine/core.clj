@@ -9,8 +9,8 @@
 
 (use 'clojure.pprint)
 
-(def work-chan (async/chan))
-(def filter-chan (async/chan))
+(def work-chan (async/chan 200))
+(def filter-chan (async/chan 200))
 (def results-chan (async/chan))
 
 (def print-chan (async/chan 40))
@@ -43,7 +43,7 @@
 (defn- fetch-doc
   "Fetches a website body based on a url"
   [url]
-  (let [num-secs (inc (rand-int 5))]
+  (let [num-secs (inc (rand-int 10))]
     (do
       (Thread/sleep (* num-secs 1000))
       (prnt (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
@@ -99,16 +99,16 @@
 
 
 
-
 (defn- start-supervisor []
   (async/thread
-    (let [visited {}]
+    (let [visited (atom {})]
       (while true
-        (let [url (async/<!! filter-chan)]
-          (when-not (contains? visited (keyword url))
+        (let [url (async/<!! filter-chan)
+              kw-url (keyword url)]
+          (when-not (contains? @visited kw-url)
             (do
-              (assoc visited (keyword url) nil)
-              (prnt (str "[start-supervisor] visited size=" (count visited)))
+              (swap! visited update-in [kw-url] (constantly nil))
+              (prnt (str "[start-supervisor][FILTERCHAN enqueue] visited size=" (count @visited)))
               (async/>!! work-chan url))))))))
 
 (defn- start-workers
@@ -119,14 +119,14 @@
       (while true
         (let [url (async/<!! work-chan)]
           (do
-            (prnt (str "[start-workers][WORKCHAN DEQUEUE] " url))
+            (prnt (str "[start-workers tid=" tid "][WORKCHAN dequeue] " url))
             (if (valid-ftype? url)
               (do
-                (prnt "[start-workers] (download url)")
+                (prnt "[start-workers tid=" tid "] (download url=" url ")")
                 (download url))
               (let [new-urls (mine-urls (fetch-doc url))]
                 (do
-                  (prnt (str "[start-workers][WORKCHAN ENQUEUE] Feeding new-urls into filter-chan tid=" tid " new-urls=" new-urls "\n\n"))
+                  (prnt (str "[start-workers tid=" tid "][FILTERCHAN enqueue] Feeding new-urls into filter-chan \nnew-urls=" new-urls "\n\n"))
                   (doseq [new-url new-urls]
                     (async/>!! filter-chan new-url)))))))))))
 
