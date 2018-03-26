@@ -9,6 +9,19 @@
 
 (use 'clojure.pprint)
 
+(def work-chan (async/chan))
+(def filter-chan (async/chan))
+(def results-chan (async/chan))
+
+(def print-chan (async/chan 40))
+(defn- prnt [text]
+  (async/>!! print-chan text))
+(defn- start-printer []
+  (async/thread
+    (while true
+      (let [print-job (async/<!! print-chan)]
+        (print (str print-job "\n"))))))
+
 ; (defmacro rnd-sleep
 ;   (let [num-secs (inc (rand-int 20))]
 ;     (do
@@ -33,14 +46,8 @@
   (let [num-secs (inc (rand-int 5))]
     (do
       (Thread/sleep (* num-secs 1000))
-      (prn (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
+      (prnt (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
       (http/get url))))
-
-
-
-(def work-chan (async/chan))
-(def results-chan (async/chan))
-
 
 (defn valid-url [url]
    (try (clojure.java.io/as-url url)
@@ -64,12 +71,12 @@
   ; Only mine the doc if it's a valid html document
   (if (invalid-doc? doc)
     (do
-      (prn "[mine-urls] Invalid document")
+      (prnt "[mine-urls] Invalid document")
       [])
     (let [alinks (hyperlinks doc)
           urls (filterv valid-url alinks)]
       (do
-        (prn (str "[mine-urls] links=" urls "\n\n"))
+        (prnt (str "[mine-urls] links=" urls "\n\n"))
         urls))))
 
 
@@ -82,37 +89,53 @@
 (defn- download [url]
   (let [num-secs (inc (rand-int 20))]
     (do
-      (prn (str "[Downloading] " url "..."))
+      (prnt (str "[Downloading] " url "..."))
       (with-open [in (io/input-stream url)
                   out (io/output-stream (filename url))]
         (io/copy in out))
       (Thread/sleep (* num-secs 1000))
-      (prn (str "[Complete!] " url))
+      (prnt (str "[Complete!] " url))
       [])))
+
+
+
+
+(defn- start-supervisor []
+  (async/thread
+    (let [visited {}]
+      (while true
+        (let [url (async/<!! filter-chan)]
+          (when-not (contains? visited (keyword url))
+            (do
+              (assoc visited (keyword url) nil)
+              (prnt (str "[start-supervisor] visited size=" (count visited)))
+              (async/>!! work-chan url))))))))
 
 (defn- start-workers
   [num-workers]
   (dotimes [tid num-workers]
-    (prn (str "Starting worker with tid=" tid))
+    (prnt (str "Starting worker with tid=" tid))
     (async/thread
       (while true
         (let [url (async/<!! work-chan)]
           (do
-            (prn (str "[start-workers][WORKCHAN DEQUEUE] " url))
+            (prnt (str "[start-workers][WORKCHAN DEQUEUE] " url))
             (if (valid-ftype? url)
               (do
-                (prn "[start-workers] (download url)")
+                (prnt "[start-workers] (download url)")
                 (download url))
               (let [new-urls (mine-urls (fetch-doc url))]
                 (do
-                  (prn (str "[start-workers][WORKCHAN ENQUEUE] Feeding new-urls into work-chan tid=" tid " new-urls=" new-urls))
+                  (prnt (str "[start-workers][WORKCHAN ENQUEUE] Feeding new-urls into filter-chan tid=" tid " new-urls=" new-urls "\n\n"))
                   (doseq [new-url new-urls]
-                    (async/>!! work-chan new-url)))))))))))
+                    (async/>!! filter-chan new-url)))))))))))
 
 (defn -main
   [& args]
   (do
-    (prn "Spawning worker threads...")
+    (start-printer)
+    (start-supervisor)
+    (prnt "Spawning worker threads...")
     (start-workers 3)
     (let [seeding-url "http://www.google.com"]
       (async/>!! work-chan seeding-url)
