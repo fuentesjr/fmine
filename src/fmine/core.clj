@@ -14,18 +14,20 @@
 (def results-chan (async/chan))
 
 (def print-chan (async/chan 40))
-(defn- prnt [text]
+(defn prnt [text]
   (async/>!! print-chan text))
-(defn- start-printer []
+(defn start-printer []
   (async/thread
     (while true
       (let [print-job (async/<!! print-chan)]
         (print (str print-job "\n"))))))
 
-; (defmacro rnd-sleep
-;   (let [num-secs (inc (rand-int 20))]
-;     (do
-;       (Thread/sleep (* num-secs 1000)))))
+(defmacro rnd-sleep [form]
+  (let [sleep-secs (inc (rand-int 10))]
+    (do
+      (print (str "[rnd-sleep] sleep-secs=" sleep-secs " milliseconds=" (* sleep-secs 1000)))
+      (Thread/sleep (* sleep-secs 1000))
+      form)))
 
 
 (def parsed-doc
@@ -40,7 +42,7 @@
         h/parse
         h/as-hickory))
 
-(defn- fetch-doc
+(defn fetch-doc
   "Fetches a website body based on a url"
   [url]
   (let [num-secs (inc (rand-int 10))]
@@ -49,25 +51,33 @@
       (prnt (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
       (http/get url))))
 
+(defn fetch-doc2
+  "Fetches a website body based on a url"
+  [url]
+  (rnd-sleep
+    (do
+      (prnt (str "[fetch-doc] url=" url))
+      (http/get url))))
+
 (defn valid-url [url]
    (try (clojure.java.io/as-url url)
       url
       (catch Exception e false)))
 
-(defn- parse-doc [doc]
+(defn parse-doc [doc]
   (-> doc
     h/parse
     h/as-hickory))
 
-(defn- hyperlinks [doc]
+(defn hyperlinks [doc]
   (mapv #(:href (:attrs %)) (s/select (s/child (s/tag :a)) (parse-doc (:body doc)))))
 
-(defn- invalid-doc? [doc]
+(defn invalid-doc? [doc]
   (let
     [content-type (get-in doc [:headers "Content-Type"])]
     (nil? (re-find #"html" content-type))))
 
-(defn- mine-urls [doc]
+(defn mine-urls [doc]
   ; Only mine the doc if it's a valid html document
   (if (invalid-doc? doc)
     (do
@@ -80,13 +90,13 @@
         urls))))
 
 
-(defn- valid-ftype? [url]
+(defn valid-ftype? [url]
   (some #(str/ends-with? url %) [".gif" ".jpg" "jpeg"]))
 
-(defn- filename [url]
+(defn filename [url]
   (last (str/split url #"/")))
 
-(defn- download [url]
+(defn download [url]
   (let [num-secs (inc (rand-int 20))]
     (do
       (prnt (str "[Downloading] " url "..."))
@@ -99,7 +109,7 @@
 
 
 
-(defn- start-supervisor []
+(defn start-supervisor []
   (async/thread
     (let [visited (atom {})]
       (while true
@@ -111,7 +121,7 @@
               (prnt (str "[start-supervisor][FILTERCHAN enqueue] visited size=" (count @visited)))
               (async/>!! work-chan url))))))))
 
-(defn- start-workers
+(defn start-workers
   [num-workers]
   (dotimes [tid num-workers]
     (prnt (str "Starting worker with tid=" tid))
