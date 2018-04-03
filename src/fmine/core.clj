@@ -9,8 +9,8 @@
 
 (use 'clojure.pprint)
 
-(def work-chan (async/chan 200))
-(def filter-chan (async/chan 200))
+(def work-chan (async/chan 100))
+(def filter-chan (async/chan 100))
 (def results-chan (async/chan))
 
 (def print-chan (async/chan 40))
@@ -25,8 +25,8 @@
 (defmacro rnd-sleep [form]
   (let [sleep-secs (inc (rand-int 10))]
     (do
-      (print (str "[rnd-sleep] sleep-secs=" sleep-secs " milliseconds=" (* sleep-secs 1000)))
-      (Thread/sleep (* sleep-secs 1000))
+      '(print (str "[rnd-sleep] sleep-secs=" sleep-secs " milliseconds=" (* sleep-secs 1000)))
+      '(Thread/sleep (* sleep-secs 1000))
       form)))
 
 
@@ -113,13 +113,14 @@
   (async/thread
     (let [visited (atom {})]
       (while true
-        (let [url (async/<!! filter-chan)
-              kw-url (keyword url)]
-          (when-not (contains? @visited kw-url)
-            (do
-              (swap! visited update-in [kw-url] (constantly nil))
-              (prnt (str "[start-supervisor][FILTERCHAN enqueue] visited size=" (count @visited)))
-              (async/>!! work-chan url))))))))
+        (let [batch (async/<!! filter-chan)
+              visits @visited
+              filtered-batch (filterv #(not (contains? visits (keyword %))) batch)]
+          (do
+            (doseq [url filtered-batch]
+              (swap! visited update-in [(keyword url)] (constantly nil)))
+            (prnt (str "[start-supervisor][FILTERCHAN enqueue] visited size=" (count @visited)))
+            (async/>!! work-chan filtered-batch)))))))
 
 (defn start-workers
   [num-workers]
@@ -127,18 +128,20 @@
     (prnt (str "Starting worker with tid=" tid))
     (async/thread
       (while true
-        (let [url (async/<!! work-chan)]
-          (do
-            (prnt (str "[start-workers tid=" tid "][WORKCHAN dequeue] " url))
-            (if (valid-ftype? url)
-              (do
-                (prnt "[start-workers tid=" tid "] (download url=" url ")")
-                (download url))
-              (let [new-urls (mine-urls (fetch-doc url))]
+        (let [workbatch (async/<!! work-chan)]
+          (doseq [url workbatch]
+            (do
+              (prnt (str "[start-workers tid=" tid "][WORKCHAN dequeue] " url))
+              (if (valid-ftype? url)
                 (do
-                  (prnt (str "[start-workers tid=" tid "][FILTERCHAN enqueue] Feeding new-urls into filter-chan \nnew-urls=" new-urls "\n\n"))
-                  (doseq [new-url new-urls]
-                    (async/>!! filter-chan new-url)))))))))))
+                  (prnt "[start-workers tid=" tid "] (download url=" url ")")
+                  (download url))
+                (let [new-urls (mine-urls (fetch-doc url))
+                      url-batches (mapv vec (partition-all 20 new-urls))]
+                  (do
+                    (prnt (str "[start-workers tid=" tid "][FILTERCHAN enqueue] Feeding url-batches into filter-chan \nnew-urls=" new-urls "\nurl-batches=" url-batches "\n\n"))
+                    (doseq [batch url-batches]
+                      (async/>!! filter-chan batch))))))))))))
 
 (defn -main
   [& args]
@@ -147,6 +150,6 @@
     (start-supervisor)
     (prnt "Spawning worker threads...")
     (start-workers 3)
-    (let [seeding-url "http://www.google.com"]
-      (async/>!! work-chan seeding-url)
+    (let [seeding-urls ["http://www.google.com"]]
+      (async/>!! work-chan seeding-urls)
       (async/<!! results-chan))))
