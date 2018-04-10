@@ -23,11 +23,11 @@
         (print (str print-job "\n"))))))
 
 (defmacro rnd-sleep [form]
-  (let [sleep-secs (inc (rand-int 10))]
+  `(let [sleep-secs# (inc (rand-int 10))]
     (do
-      '(print (str "[rnd-sleep] sleep-secs=" sleep-secs " milliseconds=" (* sleep-secs 1000)))
-      '(Thread/sleep (* sleep-secs 1000))
-      form)))
+      (prnt (str "[rnd-sleep] sleep-secs=" sleep-secs# " milliseconds=" (* sleep-secs# 1000)))
+      (Thread/sleep (* sleep-secs# 1000))
+      ~form)))
 
 
 (def parsed-doc
@@ -42,16 +42,16 @@
         h/parse
         h/as-hickory))
 
-(defn fetch-doc
+(defn fetch-doc2
   "Fetches a website body based on a url"
   [url]
-  (let [num-secs (inc (rand-int 10))]
+  (let [num-secs (inc (rand-int 15))]
     (do
       (Thread/sleep (* num-secs 1000))
       (prnt (str "[fetch-doc] url=" url " num-secs=" num-secs " milliseconds=" (* num-secs 1000)))
       (http/get url))))
 
-(defn fetch-doc2
+(defn fetch-doc
   "Fetches a website body based on a url"
   [url]
   (rnd-sleep
